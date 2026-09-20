@@ -12,7 +12,7 @@ interface FakeContext {
 
 type Handler = (event: { payload?: unknown }, context: FakeContext) => unknown;
 
-describe("pi-redact extension", () => {
+describe("pi-jev-redact extension", () => {
   it("replaces the final provider payload and emits only safe metadata", async () => {
     const handlers = new Map<string, Handler>();
     const pi = {
@@ -51,7 +51,7 @@ describe("pi-redact extension", () => {
     expect(result).toEqual({ messages: [{ role: "user", content: "*****" }] });
     expect(original.messages[0]?.content).toBe(secret);
     expect(notify).toHaveBeenCalledWith(
-      "pi-redact replaced 1 sensitive value (configured-literal)",
+      "pi-jev-redact replaced 1 sensitive value (configured-literal)",
       "warning",
     );
     expect(JSON.stringify(notify.mock.calls)).not.toContain(secret);

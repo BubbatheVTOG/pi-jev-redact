@@ -36,7 +36,7 @@ export function registerPiRedact(
 
     if (!ctx.hasUI) return;
     for (const warning of config.warnings) {
-      ctx.ui.notify(`pi-redact: ${warning}`, "warning");
+      ctx.ui.notify(`pi-jev-redact: ${warning}`, "warning");
     }
   });
 
@@ -46,7 +46,7 @@ export function registerPiRedact(
     if (config.blocked) {
       if (config.notify && ctx.hasUI) {
         ctx.ui.notify(
-          "pi-redact blocked a provider request because configuration is invalid",
+          "pi-jev-redact blocked a provider request because configuration is invalid",
           "error",
         );
       }
@@ -62,7 +62,7 @@ export function registerPiRedact(
         .sort((left, right) => left.localeCompare(right))
         .join(", ");
       ctx.ui.notify(
-        `pi-redact replaced ${result.count} sensitive value${result.count === 1 ? "" : "s"} (${categories})`,
+        `pi-jev-redact replaced ${result.count} sensitive value${result.count === 1 ? "" : "s"} (${categories})`,
         "warning",
       );
     }
