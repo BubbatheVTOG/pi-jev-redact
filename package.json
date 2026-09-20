@@ -1,0 +1,57 @@
+{
+  "name": "pi-redact",
+  "version": "0.1.0",
+  "description": "Redact sensitive text from Pi provider requests before it leaves your machine.",
+  "type": "module",
+  "license": "MIT",
+  "author": "BubbatheVTOG",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/BubbatheVTOG/pi-redact.git"
+  },
+  "homepage": "https://github.com/BubbatheVTOG/pi-redact#readme",
+  "bugs": "https://github.com/BubbatheVTOG/pi-redact/issues",
+  "keywords": [
+    "pi-package",
+    "pi-extension",
+    "redaction",
+    "secrets",
+    "dlp"
+  ],
+  "files": [
+    "src",
+    "README.md",
+    "LICENSE"
+  ],
+  "pi": {
+    "extensions": [
+      "./src/index.ts"
+    ]
+  },
+  "scripts": {
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint .",
+    "format": "prettier --check .",
+    "check": "npm run typecheck && npm run lint && npm run format && npm test",
+    "pack:check": "npm pack --dry-run"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-coding-agent": "*"
+  },
+  "devDependencies": {
+    "@earendil-works/pi-coding-agent": "^0.85.1",
+    "@types/node": "^24.0.0",
+    "eslint": "^9.0.0",
+    "prettier": "^3.0.0",
+    "typescript": "^5.8.0",
+    "typescript-eslint": "^8.0.0",
+    "vitest": "^5.0.1"
+  },
+  "dependencies": {
+    "safe-regex2": "^5.1.1"
+  }
+}

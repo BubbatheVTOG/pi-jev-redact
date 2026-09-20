@@ -1,0 +1,12 @@
+{
+  "enabled": true,
+  "builtins": true,
+  "notify": true,
+  "env": ["ANTHROPIC_API_KEY", "OPENAI_API_KEY"],
+  "literals": ["private.example.test"],
+  "patterns": [
+    {
+      "pattern": "SECRET-[A-Z0-9]{12}"
+    }
+  ]
+}
