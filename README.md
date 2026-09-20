@@ -17,7 +17,7 @@ pi install npm:pi-jev-redact
 From GitHub:
 
 ```bash
-pi install git:github.com/BubbatheVTOG/pi-redact
+pi install git:github.com/BubbatheVTOG/pi-jev-redact
 ```
 
 Try it for one Pi process without installing:

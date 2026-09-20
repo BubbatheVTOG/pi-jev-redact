@@ -7,10 +7,10 @@
   "author": "BubbatheVTOG",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/BubbatheVTOG/pi-redact.git"
+    "url": "git+https://github.com/BubbatheVTOG/pi-jev-redact.git"
   },
-  "homepage": "https://github.com/BubbatheVTOG/pi-redact#readme",
-  "bugs": "https://github.com/BubbatheVTOG/pi-redact/issues",
+  "homepage": "https://github.com/BubbatheVTOG/pi-jev-redact#readme",
+  "bugs": "https://github.com/BubbatheVTOG/pi-jev-redact/issues",
   "keywords": [
     "pi-package",
     "pi-extension",
