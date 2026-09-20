@@ -4,6 +4,8 @@
 
 It protects text in the final serialized provider payload—including system prompts, conversation context, and tool results—while leaving Pi's local session history unchanged.
 
+![pi-redact detecting and replacing a demo OpenAI-style key before the provider request](docs/images/redaction-notification.png)
+
 ## Install
 
 From npm:
