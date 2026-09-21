@@ -1,6 +1,6 @@
 # pi-jev-redact
 
-`pi-jev-redact` is a [Pi coding harness](https://github.com/earendil-works/pi-mono) extension that replaces sensitive text with `*****` immediately before a provider request leaves your machine.
+`pi-jev-redact` is a [Pi coding harness](https://github.com/earendil-works/pi-mono) extension that replaces sensitive text with `<-REDACTED->` immediately before a provider request leaves your machine.
 
 It protects text in the final serialized provider payload—including system prompts, conversation context, and tool results—while leaving Pi's local session history unchanged.
 

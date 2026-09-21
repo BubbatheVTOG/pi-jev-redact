@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { loadConfig, parseConfig } from "../src/config.js";
-import { redactText } from "../src/redactor.js";
+import { redactText, REDACTION } from "../src/redactor.js";
 
 describe("parseConfig", () => {
   it("accepts the documented configuration shape", () => {
@@ -69,7 +69,7 @@ describe("loadConfig", () => {
     expect(config.blocked).toBe(false);
     expect(
       redactText("environment-secret private.example.test", config.rules).value,
-    ).toBe("***** *****");
+    ).toBe(`${REDACTION} ${REDACTION}`);
   });
 
   it("does not read project configuration for untrusted projects", async () => {

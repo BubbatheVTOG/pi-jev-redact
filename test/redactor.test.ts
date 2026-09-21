@@ -33,7 +33,7 @@ describe("redactText", () => {
     const result = redactText("send a.b+c and keep aXbbc", [
       literalRule("literal", "a.b+c"),
     ]);
-    expect(result.value).toBe("send ***** and keep aXbbc");
+    expect(result.value).toBe(`send ${REDACTION} and keep aXbbc`);
   });
 
   it("merges overlapping matches and reports their categories", () => {
@@ -41,7 +41,7 @@ describe("redactText", () => {
       patternRule("outer", "abcdefgh"),
       patternRule("inner", "cdef"),
     ]);
-    expect(result.value).toBe("xx*****yy");
+    expect(result.value).toBe(`xx${REDACTION}yy`);
     expect(result.count).toBe(1);
     expect(result.categories).toEqual({ outer: 1, inner: 1 });
   });
@@ -50,7 +50,7 @@ describe("redactText", () => {
     const result = redactText("secretsecret", [
       literalRule("literal", "secret"),
     ]);
-    expect(result.value).toBe("**********");
+    expect(result.value).toBe(`${REDACTION}${REDACTION}`);
     expect(result.count).toBe(2);
   });
 

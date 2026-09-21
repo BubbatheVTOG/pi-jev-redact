@@ -1,6 +1,6 @@
 import safeRegex from "safe-regex2";
 
-export const REDACTION = "*****";
+export const REDACTION = "<-REDACTED->";
 
 export interface RedactionRule {
   category: string;

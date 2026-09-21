@@ -1,7 +1,7 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { describe, expect, it, vi } from "vitest";
 import { registerPiRedact } from "../src/index.js";
-import { literalRule } from "../src/redactor.js";
+import { literalRule, REDACTION } from "../src/redactor.js";
 
 interface FakeContext {
   cwd: string;
@@ -48,7 +48,9 @@ describe("pi-jev-redact extension", () => {
     const original = { messages: [{ role: "user", content: secret }] };
     const result = await beforeRequest?.({ payload: original }, context);
 
-    expect(result).toEqual({ messages: [{ role: "user", content: "*****" }] });
+    expect(result).toEqual({
+      messages: [{ role: "user", content: REDACTION }],
+    });
     expect(original.messages[0]?.content).toBe(secret);
     expect(notify).toHaveBeenCalledWith(
       "pi-jev-redact replaced 1 sensitive value (configured-literal)",

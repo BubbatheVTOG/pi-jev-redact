@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { redactPayload } from "../src/payload.js";
-import { literalRule } from "../src/redactor.js";
+import { literalRule, REDACTION } from "../src/redactor.js";
 
 const SECRET = "super-secret-value";
 const rules = [literalRule("configured", SECRET)];
@@ -18,10 +18,13 @@ describe("redactPayload", () => {
     const result = redactPayload(payload, rules);
 
     expect(result.payload).toEqual({
-      system: "system *****",
+      system: `system ${REDACTION}`,
       messages: [
-        { role: "user", content: "user *****" },
-        { role: "tool", content: [{ type: "text", text: "tool *****" }] },
+        { role: "user", content: `user ${REDACTION}` },
+        {
+          role: "tool",
+          content: [{ type: "text", text: `tool ${REDACTION}` }],
+        },
       ],
     });
     expect(payload.system).toContain(SECRET);
@@ -42,7 +45,7 @@ describe("redactPayload", () => {
       image: { type: "image", data: SECRET },
       dataUri: `data:image/png;base64,${SECRET}`,
       blob: base64,
-      text: "*****",
+      text: REDACTION,
     });
     expect(result.count).toBe(1);
   });
@@ -54,7 +57,7 @@ describe("redactPayload", () => {
     const result = redactPayload(payload, rules);
     const copy = result.payload as typeof payload;
     expect(copy).not.toBe(payload);
-    expect(copy.text).toBe("*****");
+    expect(copy.text).toBe(REDACTION);
     expect(copy.self).toBe(copy);
   });
 });
