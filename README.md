@@ -60,9 +60,31 @@ Create a global configuration at `~/.pi/agent/pi-redact.json`, or a project conf
 
 Prefer `env` rules for credentials. Do not commit literal secrets to a project configuration. Literal values must be at least four characters. Pattern rules are limited to 512 characters and reject backreferences, lookbehind, empty matches, and common nested-quantifier forms.
 
-When redaction occurs, interactive Pi sessions receive a notification containing only the replacement count and broad rule categories. The matched text is never logged by `pi-jev-redact`.
+When redaction occurs, interactive Pi sessions receive a notification containing only the replacement count and broad rule categories. The matched text is never written to disk by `pi-jev-redact`, including by the optional request log in the next section.
 
 Configuration changes take effect after `/reload` or a new Pi session.
+
+## Logging
+
+By default `pi-jev-redact` writes no files. To inspect exactly what leaves your machine, enable a per-session request log in Pi's `settings.json` (global: `~/.pi/agent/settings.json`; a project `.pi/settings.json` overrides key-by-key for trusted projects):
+
+```json
+{
+  "piRedact": {
+    "log": "report",
+    "logDir": "/tmp/pi-redact",
+    "logMaxBytes": 16777216
+  }
+}
+```
+
+- `log` — `"report"` writes metadata only: timestamp, session, cwd, replacement count, rule categories, and payload size in bytes. `"payload"` additionally includes the full redacted provider payload. `false` or an absent key disables logging.
+- `logDir` — directory for per-session JSONL files, one line per provider request, named `<session-id>.jsonl`. Default `/tmp/pi-redact`. Files are created with `0600` permissions and the directory with `0700`.
+- `logMaxBytes` — per-session file cap in bytes, default 16 MiB; `0` disables the cap. When the next entry would exceed the cap, a single marker line is written and logging stops for the rest of that session.
+
+With logging enabled, every provider request is recorded, including requests where nothing matched. `payload`-mode entries contain only the redacted payload, so matched text never appears in the log in either mode. Invalid `piRedact` values degrade to logging-disabled with a warning; provider requests are never blocked by a logging misconfiguration.
+
+The default directory lives in `/tmp`, which is world-readable and cleared on reboot. Point `logDir` at a private, persistent location if you need the log to survive.
 
 ## Security model and limits
 

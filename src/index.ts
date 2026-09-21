@@ -1,6 +1,18 @@
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import type {
+  ExtensionAPI,
+  ExtensionContext,
+} from "@earendil-works/pi-coding-agent";
 import { loadConfig, type LoadedConfig } from "./config.js";
-import { redactPayload } from "./payload.js";
+import {
+  DEFAULT_LOG_DIR,
+  DEFAULT_LOG_MAX_BYTES,
+  loadLogConfig,
+  logConfigLocations,
+  logPathFor,
+  SessionLogger,
+  type LogConfig,
+} from "./logger.js";
+import { redactPayload, type PayloadRedactionResult } from "./payload.js";
 
 const DEFAULT_CONFIG: LoadedConfig = {
   enabled: true,
@@ -10,7 +22,15 @@ const DEFAULT_CONFIG: LoadedConfig = {
   warnings: ["configuration has not loaded"],
 };
 
+const DEFAULT_LOG_CONFIG: LogConfig = {
+  mode: null,
+  dir: DEFAULT_LOG_DIR,
+  maxBytes: DEFAULT_LOG_MAX_BYTES,
+  warnings: [],
+};
+
 export type ConfigLoader = typeof loadConfig;
+export type LogConfigLoader = typeof loadLogConfig;
 
 export default function piRedact(pi: ExtensionAPI): void {
   registerPiRedact(pi);
@@ -19,11 +39,16 @@ export default function piRedact(pi: ExtensionAPI): void {
 export function registerPiRedact(
   pi: ExtensionAPI,
   configLoader: ConfigLoader = loadConfig,
+  logConfigLoader: LogConfigLoader = loadLogConfig,
 ): void {
   let configPromise = Promise.resolve(DEFAULT_CONFIG);
+  let logConfigPromise = Promise.resolve(DEFAULT_LOG_CONFIG);
+  const loggers = new Map<string, SessionLogger>();
+  const announcedSessions = new Set<string>();
 
   pi.on("session_start", async (_event, ctx) => {
-    const nextConfig = configLoader(ctx.cwd, ctx.isProjectTrusted()).catch(
+    const trusted = ctx.isProjectTrusted();
+    const nextConfig = configLoader(ctx.cwd, trusted).catch(
       (): LoadedConfig => ({
         ...DEFAULT_CONFIG,
         warnings: [
@@ -32,10 +57,22 @@ export function registerPiRedact(
       }),
     );
     configPromise = nextConfig;
-    const config = await nextConfig;
+    const nextLogConfig = logConfigLoader(
+      ctx.cwd,
+      trusted,
+      logConfigLocations(ctx.cwd),
+    ).catch((): LogConfig => ({
+      ...DEFAULT_LOG_CONFIG,
+      warnings: [
+        "logging configuration could not be loaded; logging is disabled",
+      ],
+    }));
+    logConfigPromise = nextLogConfig;
+
+    const [config, logConfig] = await Promise.all([nextConfig, nextLogConfig]);
 
     if (!ctx.hasUI) return;
-    for (const warning of config.warnings) {
+    for (const warning of [...config.warnings, ...logConfig.warnings]) {
       ctx.ui.notify(`pi-jev-redact: ${warning}`, "warning");
     }
   });
@@ -52,12 +89,13 @@ export function registerPiRedact(
       }
       return {};
     }
-    if (config.rules.length === 0) return;
 
-    const result = redactPayload(event.payload, config.rules);
-    if (result.count === 0) return;
+    const result =
+      config.rules.length === 0
+        ? { payload: event.payload, count: 0, categories: {} }
+        : redactPayload(event.payload, config.rules);
 
-    if (config.notify && ctx.hasUI) {
+    if (result.count > 0 && config.notify && ctx.hasUI) {
       const categories = Object.keys(result.categories)
         .sort((left, right) => left.localeCompare(right))
         .join(", ");
@@ -67,6 +105,45 @@ export function registerPiRedact(
       );
     }
 
-    return result.payload;
+    await logProviderRequest(ctx, result);
+
+    return result.count > 0 ? result.payload : undefined;
   });
+
+  async function logProviderRequest(
+    ctx: ExtensionContext,
+    result: PayloadRedactionResult,
+  ): Promise<void> {
+    const logConfig = await logConfigPromise;
+    if (logConfig.mode === null) return;
+
+    const sessionId = ctx.sessionManager.getSessionId();
+    let logger = loggers.get(sessionId);
+    if (!logger) {
+      logger = new SessionLogger(
+        logConfig,
+        logPathFor(logConfig, sessionId),
+        (message) => {
+          if (ctx.hasUI) ctx.ui.notify(message, "warning");
+        },
+      );
+      loggers.set(sessionId, logger);
+    }
+
+    await logger.log({
+      session: sessionId,
+      cwd: ctx.cwd,
+      count: result.count,
+      categories: result.categories,
+      payload: result.payload,
+    });
+
+    if (ctx.hasUI && !announcedSessions.has(sessionId)) {
+      announcedSessions.add(sessionId);
+      ctx.ui.notify(
+        `pi-jev-redact is logging provider payloads to ${logConfig.dir}`,
+        "info",
+      );
+    }
+  }
 }

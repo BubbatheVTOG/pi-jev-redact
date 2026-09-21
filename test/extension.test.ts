@@ -1,42 +1,65 @@
+import { mkdtemp, readFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { describe, expect, it, vi } from "vitest";
 import { registerPiRedact } from "../src/index.js";
+import { DEFAULT_LOG_DIR, type LogConfig } from "../src/logger.js";
 import { literalRule, REDACTION } from "../src/redactor.js";
 
 interface FakeContext {
   cwd: string;
   hasUI: boolean;
   isProjectTrusted(): boolean;
+  sessionManager: { getSessionId(): string };
   ui: { notify(message: string, level: string): void };
 }
 
 type Handler = (event: { payload?: unknown }, context: FakeContext) => unknown;
 
+function disabledLogConfig(): Promise<LogConfig> {
+  return Promise.resolve({
+    mode: null,
+    dir: DEFAULT_LOG_DIR,
+    maxBytes: 0,
+    warnings: [],
+  });
+}
+
+function fakePi(): { handlers: Map<string, Handler>; pi: ExtensionAPI } {
+  const handlers = new Map<string, Handler>();
+  const pi = {
+    on(name: string, handler: Handler) {
+      handlers.set(name, handler);
+    },
+  } as unknown as ExtensionAPI;
+  return { handlers, pi };
+}
+
 describe("pi-jev-redact extension", () => {
   it("replaces the final provider payload and emits only safe metadata", async () => {
-    const handlers = new Map<string, Handler>();
-    const pi = {
-      on(name: string, handler: Handler) {
-        handlers.set(name, handler);
-      },
-    } as unknown as ExtensionAPI;
+    const { handlers, pi } = fakePi();
     const notify = vi.fn();
     const context: FakeContext = {
       cwd: "/project",
       hasUI: true,
       isProjectTrusted: () => true,
+      sessionManager: { getSessionId: () => "test-session" },
       ui: { notify },
     };
     const secret = "extension-secret";
 
-    registerPiRedact(pi, () =>
-      Promise.resolve({
-        enabled: true,
-        notify: true,
-        blocked: false,
-        rules: [literalRule("configured-literal", secret)],
-        warnings: [],
-      }),
+    registerPiRedact(
+      pi,
+      () =>
+        Promise.resolve({
+          enabled: true,
+          notify: true,
+          blocked: false,
+          rules: [literalRule("configured-literal", secret)],
+          warnings: [],
+        }),
+      disabledLogConfig,
     );
 
     const sessionStart = handlers.get("session_start");
@@ -60,22 +83,20 @@ describe("pi-jev-redact extension", () => {
   });
 
   it("fails closed when configuration loading fails", async () => {
-    const handlers = new Map<string, Handler>();
-    const pi = {
-      on(name: string, handler: Handler) {
-        handlers.set(name, handler);
-      },
-    } as unknown as ExtensionAPI;
+    const { handlers, pi } = fakePi();
     const notify = vi.fn();
     const context: FakeContext = {
       cwd: "/project",
       hasUI: true,
       isProjectTrusted: () => true,
+      sessionManager: { getSessionId: () => "test-session" },
       ui: { notify },
     };
 
-    registerPiRedact(pi, () =>
-      Promise.reject(new Error("contains-sensitive-details")),
+    registerPiRedact(
+      pi,
+      () => Promise.reject(new Error("contains-sensitive-details")),
+      disabledLogConfig,
     );
     await handlers.get("session_start")?.({}, context);
 
@@ -92,27 +113,26 @@ describe("pi-jev-redact extension", () => {
   });
 
   it("does not return a replacement when no rule matches", async () => {
-    const handlers = new Map<string, Handler>();
-    const pi = {
-      on(name: string, handler: Handler) {
-        handlers.set(name, handler);
-      },
-    } as unknown as ExtensionAPI;
+    const { handlers, pi } = fakePi();
     const context: FakeContext = {
       cwd: "/project",
       hasUI: false,
       isProjectTrusted: () => false,
+      sessionManager: { getSessionId: () => "test-session" },
       ui: { notify: vi.fn() },
     };
 
-    registerPiRedact(pi, () =>
-      Promise.resolve({
-        enabled: true,
-        notify: true,
-        blocked: false,
-        rules: [literalRule("configured-literal", "not-present")],
-        warnings: [],
-      }),
+    registerPiRedact(
+      pi,
+      () =>
+        Promise.resolve({
+          enabled: true,
+          notify: true,
+          blocked: false,
+          rules: [literalRule("configured-literal", "not-present")],
+          warnings: [],
+        }),
+      disabledLogConfig,
     );
     await handlers.get("session_start")?.({}, context);
 
@@ -122,5 +142,114 @@ describe("pi-jev-redact extension", () => {
         context,
       ),
     ).resolves.toBeUndefined();
+  });
+
+  it("logs a report entry per request when enabled and announces the dir once", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "pi-redact-ext-"));
+    const { handlers, pi } = fakePi();
+    const notify = vi.fn();
+    const context: FakeContext = {
+      cwd: "/project",
+      hasUI: true,
+      isProjectTrusted: () => true,
+      sessionManager: { getSessionId: () => "test-session" },
+      ui: { notify },
+    };
+    const secret = "extension-secret";
+
+    registerPiRedact(
+      pi,
+      () =>
+        Promise.resolve({
+          enabled: true,
+          notify: true,
+          blocked: false,
+          rules: [literalRule("configured-literal", secret)],
+          warnings: [],
+        }),
+      () =>
+        Promise.resolve({
+          mode: "report" as const,
+          dir,
+          maxBytes: 0,
+          warnings: [],
+        }),
+    );
+    await handlers.get("session_start")?.({}, context);
+
+    const original = { messages: [{ role: "user", content: secret }] };
+    await handlers.get("before_provider_request")?.(
+      { payload: original },
+      context,
+    );
+    await handlers.get("before_provider_request")?.(
+      { payload: original },
+      context,
+    );
+
+    const contents = await readFile(join(dir, "test-session.jsonl"), "utf8");
+    const lines = contents.trimEnd().split("\n");
+    expect(lines).toHaveLength(2);
+    const entry = JSON.parse(lines[0] as string) as Record<string, unknown>;
+    expect(entry).toMatchObject({
+      session: "test-session",
+      cwd: "/project",
+      mode: "report",
+      count: 1,
+      categories: { "configured-literal": 1 },
+    });
+    expect(entry).not.toHaveProperty("payload");
+    expect(contents).not.toContain(secret);
+
+    const infoCalls = notify.mock.calls.filter((call) => call[1] === "info");
+    expect(infoCalls).toHaveLength(1);
+    expect(infoCalls[0]?.[0]).toContain(dir);
+  });
+
+  it("logs requests with no matches when logging is enabled", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "pi-redact-ext-"));
+    const { handlers, pi } = fakePi();
+    const context: FakeContext = {
+      cwd: "/project",
+      hasUI: false,
+      isProjectTrusted: () => false,
+      sessionManager: { getSessionId: () => "test-session" },
+      ui: { notify: vi.fn() },
+    };
+
+    registerPiRedact(
+      pi,
+      () =>
+        Promise.resolve({
+          enabled: true,
+          notify: true,
+          blocked: false,
+          rules: [literalRule("configured-literal", "not-present")],
+          warnings: [],
+        }),
+      () =>
+        Promise.resolve({
+          mode: "report" as const,
+          dir,
+          maxBytes: 0,
+          warnings: [],
+        }),
+    );
+    await handlers.get("session_start")?.({}, context);
+
+    await expect(
+      handlers.get("before_provider_request")?.(
+        { payload: { text: "safe" } },
+        context,
+      ),
+    ).resolves.toBeUndefined();
+
+    const contents = await readFile(join(dir, "test-session.jsonl"), "utf8");
+    const entry = JSON.parse(
+      contents.trimEnd().split("\n")[0] as string,
+    ) as Record<string, unknown>;
+    expect(entry.count).toBe(0);
+    expect(entry.categories).toEqual({});
+    expect(entry).not.toHaveProperty("payload");
   });
 });
