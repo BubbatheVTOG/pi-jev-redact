@@ -1,7 +1,10 @@
 {
   "enabled": true,
+  "threshold": 7,
   "builtins": true,
+  "pii": true,
   "notify": true,
+  "confirmIntent": true,
   "env": ["ANTHROPIC_API_KEY", "OPENAI_API_KEY"],
   "literals": ["private.example.test"],
   "patterns": [

@@ -1,6 +1,7 @@
 import { appendFile, mkdir, readFile, stat } from "node:fs/promises";
 import { join } from "node:path";
 import { CONFIG_DIR_NAME, getAgentDir } from "@earendil-works/pi-coding-agent";
+import { DECISION_KEYS } from "./decisions.js";
 import type { RedactionReport } from "./redactor.js";
 
 export const DEFAULT_LOG_DIR = "/tmp/pi-redact";
@@ -224,9 +225,8 @@ async function readLogBlock(
     return undefined;
   }
 
-  const unknown = Object.keys(block).filter(
-    (key) => !(LOG_KEYS as readonly string[]).includes(key),
-  );
+  const known = new Set<string>([...LOG_KEYS, ...DECISION_KEYS]);
+  const unknown = Object.keys(block).filter((key) => !known.has(key));
   if (unknown.length > 0) {
     warnings.push(
       `Unknown piRedact setting keys ignored: ${unknown.join(", ")}`,

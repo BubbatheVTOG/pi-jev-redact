@@ -12,7 +12,10 @@ describe("parseConfig", () => {
         JSON.stringify({
           enabled: true,
           builtins: true,
+          pii: false,
           notify: false,
+          confirmIntent: true,
+          threshold: 7,
           env: ["MY_SECRET"],
           literals: ["private.example.test"],
           patterns: [{ pattern: "SECRET-[A-Z0-9]{12}" }],
@@ -21,7 +24,10 @@ describe("parseConfig", () => {
     ).toEqual({
       enabled: true,
       builtins: true,
+      pii: false,
       notify: false,
+      confirmIntent: true,
+      threshold: 7,
       env: ["MY_SECRET"],
       literals: ["private.example.test"],
       patterns: [{ pattern: "SECRET-[A-Z0-9]{12}" }],
@@ -35,9 +41,15 @@ describe("parseConfig", () => {
     );
   });
 
-  it("rejects malformed custom rules", () => {
+  it("rejects malformed custom rules and threshold values", () => {
     expect(() => parseConfig('{"literals":["abc"]}')).toThrow();
     expect(() => parseConfig('{"patterns":[{"pattern":"(a+)+"}]}')).toThrow();
+    expect(() => parseConfig('{"threshold":0}')).toThrow(
+      /integer from 1 to 10/,
+    );
+    expect(() => parseConfig('{"threshold":7.5}')).toThrow(
+      /integer from 1 to 10/,
+    );
   });
 });
 
@@ -114,5 +126,73 @@ describe("loadConfig", () => {
     expect(config.blocked).toBe(true);
     expect(config.warnings.join(" ")).not.toContain("top-secret");
     expect(config.rules.length).toBeGreaterThan(0);
+  });
+});
+
+describe("threshold tiers", () => {
+  async function configFor(value: Record<string, unknown>) {
+    const directory = await mkdtemp(join(tmpdir(), "pi-redact-tier-"));
+    const global = join(directory, "global.json");
+    await writeFile(global, JSON.stringify(value));
+    return loadConfig(
+      directory,
+      false,
+      {},
+      {
+        global,
+        project: join(directory, "missing"),
+      },
+    );
+  }
+
+  it("defaults to threshold 5 with all established secret rules and no PII", async () => {
+    const config = await configFor({});
+    expect(config.threshold).toBe(5);
+    expect(config.confirmIntent).toBe(true);
+    expect(redactText("person@example.com", config.rules).count).toBe(0);
+    expect(
+      redactText(
+        ["ghp", "abcdefghijklmnopqrstuvwxyz123456"].join("_"),
+        config.rules,
+      ).count,
+    ).toBe(1);
+  });
+
+  it("uses core secrets at low levels and adds PII at level 7", async () => {
+    const low = await configFor({ threshold: 2 });
+    expect(
+      redactText(
+        ["ghp", "abcdefghijklmnopqrstuvwxyz123456"].join("_"),
+        low.rules,
+      ).count,
+    ).toBe(0);
+    expect(
+      redactText(
+        ["sk-proj", "abcdefghijklmnopqrstuvwxyz123456"].join("-"),
+        low.rules,
+      ).count,
+    ).toBe(1);
+
+    const pii = await configFor({ threshold: 7 });
+    expect(redactText("person@example.com 555-867-5309", pii.rules).count).toBe(
+      2,
+    );
+  });
+
+  it("adds network and aggressive rules at level 9 with explicit overrides", async () => {
+    const high = await configFor({ threshold: 9 });
+    expect(
+      redactText("Bearer abcdefghijklmnop 203.0.113.10", high.rules).count,
+    ).toBe(2);
+
+    const overridden = await configFor({
+      threshold: 9,
+      builtins: false,
+      pii: false,
+    });
+    expect(
+      redactText("Bearer abcdefghijklmnop 203.0.113.10", overridden.rules)
+        .count,
+    ).toBe(0);
   });
 });

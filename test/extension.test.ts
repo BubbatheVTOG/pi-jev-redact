@@ -12,7 +12,10 @@ interface FakeContext {
   hasUI: boolean;
   isProjectTrusted(): boolean;
   sessionManager: { getSessionId(): string };
-  ui: { notify(message: string, level: string): void };
+  ui: {
+    notify(message: string, level: string): void;
+    confirm?(title: string, message: string): Promise<boolean>;
+  };
 }
 
 type Handler = (event: { payload?: unknown }, context: FakeContext) => unknown;
@@ -55,6 +58,8 @@ describe("pi-jev-redact extension", () => {
         Promise.resolve({
           enabled: true,
           notify: true,
+          confirmIntent: false,
+          threshold: 5,
           blocked: false,
           rules: [literalRule("configured-literal", secret)],
           warnings: [],
@@ -128,6 +133,8 @@ describe("pi-jev-redact extension", () => {
         Promise.resolve({
           enabled: true,
           notify: true,
+          confirmIntent: false,
+          threshold: 5,
           blocked: false,
           rules: [literalRule("configured-literal", "not-present")],
           warnings: [],
@@ -163,6 +170,8 @@ describe("pi-jev-redact extension", () => {
         Promise.resolve({
           enabled: true,
           notify: true,
+          confirmIntent: false,
+          threshold: 5,
           blocked: false,
           rules: [literalRule("configured-literal", secret)],
           warnings: [],
@@ -223,6 +232,8 @@ describe("pi-jev-redact extension", () => {
         Promise.resolve({
           enabled: true,
           notify: true,
+          confirmIntent: false,
+          threshold: 5,
           blocked: false,
           rules: [literalRule("configured-literal", "not-present")],
           warnings: [],
@@ -251,5 +262,93 @@ describe("pi-jev-redact extension", () => {
     expect(entry.count).toBe(0);
     expect(entry.categories).toEqual({});
     expect(entry).not.toHaveProperty("payload");
+  });
+});
+
+describe("sensitive-send decisions", () => {
+  it("asks once for a new chunk and remembers an approval", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "pi-redact-approval-"));
+    const { handlers, pi } = fakePi();
+    const confirm = vi.fn().mockResolvedValue(true);
+    const notify = vi.fn();
+    const context: FakeContext = {
+      cwd: "/project",
+      hasUI: true,
+      isProjectTrusted: () => true,
+      sessionManager: { getSessionId: () => "approval-session" },
+      ui: { notify, confirm },
+    };
+    const sensitive = "sensitive-chunk-value";
+
+    registerPiRedact(
+      pi,
+      () =>
+        Promise.resolve({
+          enabled: true,
+          notify: true,
+          confirmIntent: true,
+          threshold: 5,
+          blocked: false,
+          rules: [literalRule("configured-literal", sensitive)],
+          warnings: [],
+        }),
+      disabledLogConfig,
+      () => Promise.resolve({ dir, warnings: [] }),
+    );
+    await handlers.get("session_start")?.({}, context);
+
+    const payload = { text: sensitive };
+    const results = await Promise.all([
+      handlers.get("before_provider_request")?.({ payload }, context),
+      handlers.get("before_provider_request")?.({ payload }, context),
+    ]);
+    expect(results).toEqual([{ text: REDACTION }, { text: REDACTION }]);
+    expect(confirm).toHaveBeenCalledTimes(1);
+    expect(JSON.stringify(confirm.mock.calls)).not.toContain(sensitive);
+  });
+
+  it("censors a denied chunk and silently blocks it if it reappears", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "pi-redact-denial-"));
+    const { handlers, pi } = fakePi();
+    const confirm = vi.fn().mockResolvedValue(false);
+    const notify = vi.fn();
+    const context: FakeContext = {
+      cwd: "/project",
+      hasUI: true,
+      isProjectTrusted: () => true,
+      sessionManager: { getSessionId: () => "denial-session" },
+      ui: { notify, confirm },
+    };
+    const sensitive = "another-sensitive-chunk";
+
+    registerPiRedact(
+      pi,
+      () =>
+        Promise.resolve({
+          enabled: true,
+          notify: true,
+          confirmIntent: true,
+          threshold: 5,
+          blocked: false,
+          rules: [literalRule("configured-literal", sensitive)],
+          warnings: [],
+        }),
+      disabledLogConfig,
+      () => Promise.resolve({ dir, warnings: [] }),
+    );
+    await handlers.get("session_start")?.({}, context);
+
+    const payload = { text: sensitive };
+    await expect(
+      handlers.get("before_provider_request")?.({ payload }, context),
+    ).resolves.toEqual({});
+    await expect(
+      handlers.get("before_provider_request")?.({ payload }, context),
+    ).resolves.toEqual({});
+    expect(confirm).toHaveBeenCalledTimes(1);
+    expect(notify).toHaveBeenCalledWith(
+      "pi-jev-redact censored the provider request at the user's direction",
+      "error",
+    );
   });
 });

@@ -22,7 +22,7 @@ interface Match {
   category: string;
 }
 
-const BUILTIN_RULES: readonly RedactionRule[] = [
+const CORE_SECRET_RULES: readonly RedactionRule[] = [
   {
     category: "private-key",
     expression:
@@ -36,6 +36,9 @@ const BUILTIN_RULES: readonly RedactionRule[] = [
     category: "openai-key",
     expression: /sk-(?!ant-)(?:proj-|svcacct-)?[A-Za-z0-9_-]{20,}/g,
   },
+];
+
+const PLATFORM_SECRET_RULES: readonly RedactionRule[] = [
   {
     category: "github-token",
     expression: /(?:gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,})/g,
@@ -54,11 +57,80 @@ const BUILTIN_RULES: readonly RedactionRule[] = [
   },
 ];
 
-export function getBuiltinRules(): RedactionRule[] {
-  return BUILTIN_RULES.map(({ category, expression }) => ({
+const PII_RULES: readonly RedactionRule[] = [
+  {
+    category: "email",
+    expression: /\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/gi,
+  },
+  {
+    category: "phone-number",
+    expression:
+      /(?<!\d)(?:\+?1[ .-]?)?(?:\(\d{3}\)|\d{3})[ .-]\d{3}[ .-]\d{4}(?!\d)/g,
+  },
+  {
+    category: "us-ssn",
+    expression: /\b\d{3}-\d{2}-\d{4}\b/g,
+  },
+  {
+    category: "payment-card",
+    expression: /\b(?:\d[ -]*?){13,19}\b/g,
+  },
+];
+
+const NETWORK_RULES: readonly RedactionRule[] = [
+  {
+    category: "ipv4-address",
+    expression:
+      /\b(?:(?:25[0-5]|2[0-4]\d|1?\d?\d)\.){3}(?:25[0-5]|2[0-4]\d|1?\d?\d)\b/g,
+  },
+  {
+    category: "mac-address",
+    expression: /\b(?:[A-F0-9]{2}[:-]){5}[A-F0-9]{2}\b/gi,
+  },
+];
+
+const AGGRESSIVE_RULES: readonly RedactionRule[] = [
+  {
+    category: "bearer-token",
+    expression: /\bBearer\s+[A-Za-z0-9._~+/=-]{12,}/gi,
+  },
+  {
+    category: "url-credential",
+    expression: /https?:\/\/[^\s/@:]+:[^\s/@]+@/gi,
+  },
+  {
+    category: "generic-secret-assignment",
+    expression:
+      /\b(?:API_KEY|TOKEN|SECRET|PASSWORD|PASSWD|PRIVATE_KEY)\s*[:=]\s*["']?[^\s"']{8,}["']?/gi,
+  },
+];
+
+function cloneRules(rules: readonly RedactionRule[]): RedactionRule[] {
+  return rules.map(({ category, expression }) => ({
     category,
     expression: new RegExp(expression.source, expression.flags),
   }));
+}
+
+export function getCoreSecretRules(): RedactionRule[] {
+  return cloneRules(CORE_SECRET_RULES);
+}
+
+/** All secret built-ins; preserves the pre-threshold public API. */
+export function getBuiltinRules(): RedactionRule[] {
+  return cloneRules([...CORE_SECRET_RULES, ...PLATFORM_SECRET_RULES]);
+}
+
+export function getPiiRules(): RedactionRule[] {
+  return cloneRules(PII_RULES);
+}
+
+export function getNetworkRules(): RedactionRule[] {
+  return cloneRules(NETWORK_RULES);
+}
+
+export function getAggressiveRules(): RedactionRule[] {
+  return cloneRules(AGGRESSIVE_RULES);
 }
 
 export function literalRule(category: string, literal: string): RedactionRule {
@@ -92,6 +164,7 @@ export function patternRule(
 export function redactText(
   value: string,
   rules: readonly RedactionRule[],
+  onSpan?: (original: string) => void,
 ): RedactionResult {
   const matches = collectMatches(value, rules);
   if (matches.length === 0) {
@@ -106,6 +179,7 @@ export function redactText(
   for (const match of merged) {
     redacted += value.slice(cursor, match.start);
     redacted += REDACTION;
+    onSpan?.(value.slice(match.start, match.end));
     cursor = match.end;
     for (const category of match.categories) {
       categories[category] = (categories[category] ?? 0) + 1;

@@ -2,11 +2,17 @@ import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { CONFIG_DIR_NAME, getAgentDir } from "@earendil-works/pi-coding-agent";
 import {
+  getAggressiveRules,
   getBuiltinRules,
+  getCoreSecretRules,
+  getNetworkRules,
+  getPiiRules,
   literalRule,
   patternRule,
   type RedactionRule,
 } from "./redactor.js";
+
+export const DEFAULT_THRESHOLD = 5;
 
 const MAX_CONFIG_BYTES = 64 * 1024;
 
@@ -18,7 +24,10 @@ interface PatternConfig {
 interface ConfigFile {
   enabled?: boolean;
   builtins?: boolean;
+  pii?: boolean;
   notify?: boolean;
+  confirmIntent?: boolean;
+  threshold?: number;
   env?: string[];
   literals?: string[];
   patterns?: PatternConfig[];
@@ -27,6 +36,8 @@ interface ConfigFile {
 export interface LoadedConfig {
   enabled: boolean;
   notify: boolean;
+  confirmIntent: boolean;
+  threshold: number;
   blocked: boolean;
   rules: RedactionRule[];
   warnings: string[];
@@ -59,10 +70,13 @@ export async function loadConfig(
     (config): config is ConfigFile => config !== undefined,
   );
 
-  const enabled = latest(configs, "enabled") ?? true;
-  const builtins = latest(configs, "builtins") ?? true;
-  const notify = latest(configs, "notify") ?? true;
-  const rules = builtins ? getBuiltinRules() : [];
+  const enabled = latestBoolean(configs, "enabled") ?? true;
+  const notify = latestBoolean(configs, "notify") ?? true;
+  const confirmIntent = latestBoolean(configs, "confirmIntent") ?? true;
+  const threshold = latestNumber(configs, "threshold") ?? DEFAULT_THRESHOLD;
+  const builtins = latestBoolean(configs, "builtins");
+  const pii = latestBoolean(configs, "pii");
+  const rules = rulesForThreshold(threshold, builtins, pii);
 
   for (const config of configs) {
     for (const name of config.env ?? []) {
@@ -84,7 +98,15 @@ export async function loadConfig(
     }
   }
 
-  return { enabled, notify, blocked: warnings.length > 0, rules, warnings };
+  return {
+    enabled,
+    notify,
+    confirmIntent,
+    threshold,
+    blocked: warnings.length > 0,
+    rules,
+    warnings,
+  };
 }
 
 async function readOptionalConfig(
@@ -128,7 +150,10 @@ export function parseConfig(contents: string): ConfigFile {
   const allowed = new Set([
     "enabled",
     "builtins",
+    "pii",
     "notify",
+    "confirmIntent",
+    "threshold",
     "env",
     "literals",
     "patterns",
@@ -139,7 +164,10 @@ export function parseConfig(contents: string): ConfigFile {
 
   optionalBoolean(value.enabled, "enabled");
   optionalBoolean(value.builtins, "builtins");
+  optionalBoolean(value.pii, "pii");
   optionalBoolean(value.notify, "notify");
+  optionalBoolean(value.confirmIntent, "confirmIntent");
+  optionalThreshold(value.threshold);
   const env = optionalStringArray(value.env, "env");
   env?.forEach(validateEnvironmentName);
   const literals = optionalStringArray(value.literals, "literals");
@@ -159,7 +187,14 @@ export function parseConfig(contents: string): ConfigFile {
     ...(typeof value.builtins === "boolean"
       ? { builtins: value.builtins }
       : {}),
+    ...(typeof value.pii === "boolean" ? { pii: value.pii } : {}),
     ...(typeof value.notify === "boolean" ? { notify: value.notify } : {}),
+    ...(typeof value.confirmIntent === "boolean"
+      ? { confirmIntent: value.confirmIntent }
+      : {}),
+    ...(typeof value.threshold === "number"
+      ? { threshold: value.threshold }
+      : {}),
     ...(env ? { env } : {}),
     ...(literals ? { literals } : {}),
     ...(patterns ? { patterns } : {}),
@@ -187,15 +222,58 @@ function validateEnvironmentName(name: string): void {
   }
 }
 
-function latest(
+function rulesForThreshold(
+  threshold: number,
+  builtins: boolean | undefined,
+  pii: boolean | undefined,
+): RedactionRule[] {
+  const rules: RedactionRule[] = [];
+  if (builtins !== false) {
+    rules.push(
+      ...(builtins === true || threshold >= 4
+        ? getBuiltinRules()
+        : getCoreSecretRules()),
+    );
+    if (threshold >= 9) rules.push(...getAggressiveRules());
+  }
+  if (pii === true || (pii === undefined && threshold >= 7)) {
+    rules.push(...getPiiRules());
+    if (threshold >= 9) rules.push(...getNetworkRules());
+  }
+  return rules;
+}
+
+function latestBoolean(
   configs: readonly ConfigFile[],
-  key: "enabled" | "builtins" | "notify",
+  key: "enabled" | "builtins" | "pii" | "notify" | "confirmIntent",
 ): boolean | undefined {
   for (let index = configs.length - 1; index >= 0; index -= 1) {
     const value = configs[index]?.[key];
     if (value !== undefined) return value;
   }
   return undefined;
+}
+
+function latestNumber(
+  configs: readonly ConfigFile[],
+  key: "threshold",
+): number | undefined {
+  for (let index = configs.length - 1; index >= 0; index -= 1) {
+    const value = configs[index]?.[key];
+    if (value !== undefined) return value;
+  }
+  return undefined;
+}
+
+function optionalThreshold(value: unknown): void {
+  if (
+    value !== undefined &&
+    (!Number.isInteger(value) ||
+      (value as number) < 1 ||
+      (value as number) > 10)
+  ) {
+    throw new Error("threshold must be an integer from 1 to 10");
+  }
 }
 
 function optionalBoolean(value: unknown, key: string): void {

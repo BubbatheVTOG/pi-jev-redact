@@ -61,3 +61,53 @@ describe("redactPayload", () => {
     expect(copy.self).toBe(copy);
   });
 });
+
+it("preserves outbound credential headers while redacting other fields", () => {
+  const payload = {
+    headers: {
+      Authorization: `Bearer ${SECRET}`,
+      "x-api-key": SECRET,
+      "x-trace-note": SECRET,
+    },
+    body: { text: SECRET },
+  };
+
+  const result = redactPayload(payload, rules);
+  expect(result.payload).toEqual({
+    headers: {
+      Authorization: `Bearer ${SECRET}`,
+      "x-api-key": SECRET,
+      "x-trace-note": REDACTION,
+    },
+    body: { text: REDACTION },
+  });
+  expect(result.count).toBe(2);
+});
+
+it("forcibly redacts credential headers for logging", () => {
+  const result = redactPayload(
+    {
+      headers: {
+        Authorization: `Bearer ${SECRET}`,
+        "x-api-key": SECRET,
+      },
+    },
+    [],
+    { preserveCredentialHeaders: false },
+  );
+  expect(result.payload).toEqual({
+    headers: {
+      Authorization: REDACTION,
+      "x-api-key": REDACTION,
+    },
+  });
+});
+
+it("returns stable fingerprints without exposing original values", () => {
+  const first = redactPayload({ text: SECRET }, rules);
+  const second = redactPayload({ nested: [SECRET] }, rules);
+  expect(first.fingerprints).toHaveLength(1);
+  expect(first.fingerprints).toEqual(second.fingerprints);
+  expect(first.fingerprints[0]).toMatch(/^[a-f0-9]{64}$/);
+  expect(JSON.stringify(first.fingerprints)).not.toContain(SECRET);
+});

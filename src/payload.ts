@@ -1,11 +1,28 @@
+import { createHash } from "node:crypto";
 import {
   redactText,
+  REDACTION,
   type RedactionReport,
   type RedactionRule,
 } from "./redactor.js";
 
+export interface PayloadRedactionOptions {
+  /** Preserve provider authentication values for transport. Default true. */
+  preserveCredentialHeaders?: boolean;
+}
+
+const CREDENTIAL_HEADERS = new Set([
+  "authorization",
+  "proxy-authorization",
+  "x-api-key",
+  "api-key",
+  "x-goog-api-key",
+]);
+
 export interface PayloadRedactionResult extends RedactionReport {
   payload: unknown;
+  /** SHA-256 fingerprints of original redacted spans; raw values are omitted. */
+  fingerprints: string[];
 }
 
 type SanitizedValue =
@@ -14,22 +31,41 @@ type SanitizedValue =
 export function redactPayload(
   payload: unknown,
   rules: readonly RedactionRule[],
+  options: PayloadRedactionOptions = {},
 ): PayloadRedactionResult {
   const report: RedactionReport = { count: 0, categories: {} };
+  const fingerprints = new Set<string>();
   const seen = new WeakMap<object, SanitizedValue>();
-  const sanitized = visit(payload, rules, report, seen);
-  return { payload: sanitized, ...report };
+  const sanitized = visit(
+    payload,
+    rules,
+    report,
+    fingerprints,
+    seen,
+    false,
+    options.preserveCredentialHeaders !== false,
+  );
+  return {
+    payload: sanitized,
+    fingerprints: [...fingerprints].sort(),
+    ...report,
+  };
 }
 
 function visit(
   value: unknown,
   rules: readonly RedactionRule[],
   report: RedactionReport,
+  fingerprints: Set<string>,
   seen: WeakMap<object, SanitizedValue>,
+  headerContainer: boolean,
+  preserveCredentialHeaders: boolean,
 ): SanitizedValue {
   if (typeof value === "string") {
     if (isBinaryString(value)) return value;
-    const result = redactText(value, rules);
+    const result = redactText(value, rules, (span) => {
+      fingerprints.add(createHash("sha256").update(span).digest("hex"));
+    });
     mergeReport(report, result);
     return result.value;
   }
@@ -51,7 +87,19 @@ function visit(
     if (existing) return existing;
     const copy: SanitizedValue[] = [];
     seen.set(value, copy);
-    for (const item of value) copy.push(visit(item, rules, report, seen));
+    for (const item of value) {
+      copy.push(
+        visit(
+          item,
+          rules,
+          report,
+          fingerprints,
+          seen,
+          false,
+          preserveCredentialHeaders,
+        ),
+      );
+    }
     return copy;
   }
 
@@ -62,9 +110,23 @@ function visit(
   const copy: Record<string, SanitizedValue> = {};
   seen.set(value, copy);
   for (const [key, item] of Object.entries(value)) {
+    if (headerContainer && CREDENTIAL_HEADERS.has(key.toLowerCase())) {
+      copy[key] = preserveCredentialHeaders
+        ? (item as SanitizedValue)
+        : REDACTION;
+      continue;
+    }
     copy[key] = isImageData(value, key, item)
       ? item
-      : visit(item, rules, report, seen);
+      : visit(
+          item,
+          rules,
+          report,
+          fingerprints,
+          seen,
+          key.toLowerCase() === "headers" && isPlainObject(item),
+          preserveCredentialHeaders,
+        );
   }
   return copy;
 }
