@@ -6,6 +6,28 @@ It protects text in the final serialized provider payload—including system pro
 
 ![pi-jev-redact detecting and replacing a demo OpenAI-style key before the provider request](docs/images/redaction-notification.png)
 
+## Disable or pause redaction
+
+For a guaranteed package-level disable, run `pi config`, select the scope where
+`pi-jev-redact` is installed, and disable its extension resource. Then run
+`/reload` or start a new Pi process.
+
+To keep the extension loaded but bypass redaction, create or edit the global
+`~/.pi/agent/pi-redact.json`:
+
+```json
+{
+  "enabled": false
+}
+```
+
+Then run `/reload` or start a new Pi process. A trusted project's
+`.pi/pi-redact.json` is applied after the global file and can set `enabled` back
+to `true`; use `pi config` when the disable must not be overridable by project
+configuration. For one diagnostic process with **all** auto-discovered
+extensions disabled, start Pi with `pi --no-extensions` (explicit `-e` paths
+still load).
+
 ## Install
 
 From npm:
@@ -44,7 +66,7 @@ secret/PII groups.
 
 ## Configuration
 
-Create a global configuration at `~/.pi/agent/pi-redact.json`, or a project configuration at `.pi/pi-redact.json`. These filenames are retained for compatibility with existing installations. Project configuration is read only for trusted projects. When both exist, project booleans override global booleans and custom rules are combined.
+Create a global configuration at `~/.pi/agent/pi-redact.json`, or a project configuration at `.pi/pi-redact.json`. These filenames are retained for compatibility with existing installations. Project configuration is read only for trusted projects. When both exist, project scalar options (`enabled`, `threshold`, `builtins`, `pii`, `notify`, and `confirmIntent`) override global values and custom rules are combined.
 
 ```json
 {
@@ -64,15 +86,48 @@ Create a global configuration at `~/.pi/agent/pi-redact.json`, or a project conf
 }
 ```
 
-Prefer `env` rules for credentials. Do not commit literal secrets to a project configuration. Literal values must be at least four characters. Pattern rules are limited to 512 characters and reject backreferences, lookbehind, empty matches, and common nested-quantifier forms.
+### Redaction configuration reference
+
+| Key                  | Default  | Accepted values and behavior                                                                                                                                                                                                                                      |
+| -------------------- | -------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `enabled`            | `true`   | Boolean master toggle. When `false`, requests pass through unchanged and no redaction log entry is produced.                                                                                                                                                      |
+| `threshold`          | `5`      | Integer 1–10 selecting the built-in detection tiers described above.                                                                                                                                                                                              |
+| `builtins`           | derived  | When absent, thresholds 1–3 use core provider/private-key rules and 4–10 use all established secret rules. `true` forces all established secret rules at any threshold; `false` disables core, platform, and aggressive secret rules. Custom rules remain active. |
+| `pii`                | derived  | When absent, PII begins at threshold 7 and network identifiers at 9. `true` enables PII at any threshold (network identifiers still require threshold 9); `false` disables both PII and network rules.                                                            |
+| `notify`             | `true`   | Show privacy-safe replacement and censor notifications in interactive sessions.                                                                                                                                                                                   |
+| `confirmIntent`      | `true`   | Prompt once for each previously unseen sensitive fingerprint. Approval sends the redacted payload; denial censors the entire provider request. Headless sessions cannot prompt and send only the redacted payload.                                                |
+| `env`                | `[]`     | Environment-variable names matching `^[A-Z_][A-Z0-9_]*$`. Resolved values become exact literal rules; unset or shorter-than-four values produce a fail-closed warning.                                                                                            |
+| `literals`           | `[]`     | Exact strings of at least four characters. Do not commit actual credentials.                                                                                                                                                                                      |
+| `patterns`           | `[]`     | Objects containing `pattern` and optional `flags`; each produces category `configured-pattern`.                                                                                                                                                                   |
+| `patterns[].pattern` | required | Regular-expression source, 1–512 characters, non-empty-match only, and rejected when unsafe/backtracking-prone. Backreferences, lookbehind, and common nested quantifiers are disallowed.                                                                         |
+| `patterns[].flags`   | `""`     | Any unique combination of `i`, `m`, `s`, `u`, and `y`. Global matching is added automatically; specifying `g` is rejected.                                                                                                                                        |
+
+### Default rationale
+
+Threshold 5 catches established secret formats without broadly treating common
+emails, phone numbers, or IP addresses in source code as PII. Set threshold 7
+(or `pii: true`) when PII protection should be active by default; use threshold
+9 for network identifiers and aggressive generic-secret patterns. Intent
+confirmation defaults on, while request logging defaults off. Authentication
+headers remain intact only for provider transport and are forcibly removed from
+any payload logging copy.
+
+Global configuration is applied first; a trusted project file applies second.
+The latest `enabled`, `threshold`, `builtins`, `pii`, `notify`, and
+`confirmIntent` values win. `env`, `literals`, and `patterns` are additive
+across both files. Untrusted project files are never read. Configuration files
+larger than 64 KiB are ignored with a fail-closed warning.
+
+Prefer `env` rules for credentials. Do not commit literal secrets to a project configuration.
 
 When redaction occurs, interactive Pi sessions receive a notification containing
 only the replacement count and broad rule categories. With `confirmIntent`
 (default `true`), each previously unseen sensitive span also prompts: approve to
 send the redacted payload, or deny to censor the whole provider request. Decisions
 are remembered by SHA-256 fingerprint, so the same span is not repeatedly asked
-about. A previously denied span is silently censored if it reappears. Headless
-sessions cannot prompt and proceed with the redacted payload.
+about. A previously denied span is silently censored if it reappears. Concurrent
+intent checks are serialized so one new fingerprint produces one prompt.
+Headless sessions cannot prompt and proceed with the redacted payload.
 
 The matched text is never written to disk. The decision cache stores only hashes,
 timestamps, decisions, and category names; the optional request log in the next
@@ -103,11 +158,13 @@ By default `pi-jev-redact` writes no files. To inspect exactly what leaves your 
   `~/.cache/pi-jev-redact` on Linux, `~/Library/Caches/pi-jev-redact` on macOS,
   and `%LOCALAPPDATA%/pi-jev-redact` on Windows. Files use mode `0600`; the
   directory uses `0700`. Set this to a `/tmp` location for reboot-ephemeral
-  decisions.
+  decisions. The cache keeps at most 10,000 entries and evicts the oldest first.
+  Writes use atomic replacement plus a cross-process lock/reload/merge cycle, so
+  multiple Pi processes sharing one directory preserve one another's decisions.
 
 With logging enabled, every provider request is recorded, including requests where nothing matched. `payload`-mode entries contain only the redacted payload. Credential-header values that must remain intact for transport are forcibly replaced in the logging copy, even if they do not match an enabled detection rule, so provider authentication is never persisted. Invalid `piRedact` values degrade to logging-disabled with a warning; provider requests are never blocked by a logging misconfiguration.
 
-The default directory lives in `/tmp`, which is world-readable and cleared on reboot. Point `logDir` at a private, persistent location if you need the log to survive.
+The default log directory is `/tmp/pi-redact`; the extension creates that subdirectory with mode `0700` and files with `0600`, even though its `/tmp` parent is shared. Temporary storage is commonly cleared during reboot or system cleanup but is not a durability guarantee. Point `logDir` at a private, persistent location when logs must survive.
 
 ## Security model and limits
 

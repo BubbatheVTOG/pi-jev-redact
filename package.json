@@ -1,6 +1,6 @@
 {
   "name": "pi-jev-redact",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "description": "Redact sensitive text from Pi provider requests before it leaves your machine.",
   "type": "module",
   "license": "MIT",
